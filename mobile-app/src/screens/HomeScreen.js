@@ -9,6 +9,8 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
+  Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
@@ -29,6 +31,7 @@ export default function HomeScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [recording, setRecording] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [showSuggestions, setShowSuggestions] = useState(true);
   const scrollViewRef = useRef();
   const durationInterval = useRef();
 
@@ -94,6 +97,11 @@ export default function HomeScreen() {
 
   // Sesli mesaj gönder
   const sendAudioMessage = async (audioUri) => {
+    // İlk mesaj gönderildiğinde önerileri gizle
+    if (showSuggestions) {
+      setShowSuggestions(false);
+    }
+
     // Kullanıcı mesajını ekle (ses ikonu ile)
     const userMessage = {
       id: Date.now(),
@@ -154,6 +162,11 @@ export default function HomeScreen() {
   // Mesaj gönder
   const sendMessage = async (text = inputText) => {
     if (!text.trim()) return;
+
+    // İlk mesaj gönderildiğinde önerileri gizle
+    if (showSuggestions) {
+      setShowSuggestions(false);
+    }
 
     const userMessage = {
       id: Date.now(),
@@ -233,12 +246,15 @@ export default function HomeScreen() {
     <KeyboardAvoidingView 
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
       {/* Mesajlar */}
       <ScrollView
         ref={scrollViewRef}
         style={styles.messagesContainer}
         onContentSizeChange={() => scrollViewRef.current?.scrollToEnd()}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: 20 }}
       >
         {messages.map((message) => (
           <View
@@ -283,22 +299,24 @@ export default function HomeScreen() {
         )}
       </ScrollView>
 
-      {/* Hızlı Komutlar */}
-      <ScrollView 
-        horizontal 
-        style={styles.quickCommandsContainer}
-        showsHorizontalScrollIndicator={false}
-      >
-        {quickCommands.map((command, index) => (
-          <TouchableOpacity
-            key={index}
-            style={styles.quickCommandButton}
-            onPress={() => handleQuickCommand(command)}
-          >
-            <Text style={styles.quickCommandText}>{command}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {/* Hızlı Komutlar - Sadece ilk mesajdan önce göster */}
+      {showSuggestions && (
+        <ScrollView 
+          horizontal 
+          style={styles.quickCommandsContainer}
+          showsHorizontalScrollIndicator={false}
+        >
+          {quickCommands.map((command, index) => (
+            <TouchableOpacity
+              key={index}
+              style={styles.quickCommandButton}
+              onPress={() => handleQuickCommand(command)}
+            >
+              <Text style={styles.quickCommandText}>{command}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
       {/* Mesaj Girişi */}
       <View style={styles.inputContainer}>
