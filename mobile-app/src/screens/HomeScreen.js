@@ -32,6 +32,8 @@ export default function HomeScreen() {
   const [recording, setRecording] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [currentSpeakingMessageId, setCurrentSpeakingMessageId] = useState(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const scrollViewRef = useRef();
   const durationInterval = useRef();
 
@@ -224,11 +226,40 @@ export default function HomeScreen() {
   };
 
   // Mesajı sesli okuma
-  const speakMessage = (text) => {
+  const speakMessage = (text, messageId) => {
+    // Eğer aynı mesaj zaten okunuyorsa, durdur
+    if (currentSpeakingMessageId === messageId && isSpeaking) {
+      Speech.stop();
+      setCurrentSpeakingMessageId(null);
+      setIsSpeaking(false);
+      return;
+    }
+
+    // Başka bir mesaj okunuyorsa, önce onu durdur
+    if (isSpeaking) {
+      Speech.stop();
+    }
+
+    // Yeni mesajı okumaya başla
+    setCurrentSpeakingMessageId(messageId);
+    setIsSpeaking(true);
+
     Speech.speak(text, {
       language: 'tr-TR',
       pitch: 1.0,
       rate: 0.8,
+      onDone: () => {
+        setCurrentSpeakingMessageId(null);
+        setIsSpeaking(false);
+      },
+      onStopped: () => {
+        setCurrentSpeakingMessageId(null);
+        setIsSpeaking(false);
+      },
+      onError: () => {
+        setCurrentSpeakingMessageId(null);
+        setIsSpeaking(false);
+      },
     });
   };
 
@@ -265,10 +296,17 @@ export default function HomeScreen() {
               {/* AI mesajları için sesli dinleme butonu */}
               {!message.isUser && (
                 <TouchableOpacity
-                  style={styles.speakButton}
-                  onPress={() => speakMessage(message.text)}
+                  style={[
+                    styles.speakButton,
+                    currentSpeakingMessageId === message.id && isSpeaking && styles.speakButtonActive
+                  ]}
+                  onPress={() => speakMessage(message.text, message.id)}
                 >
-                  <Ionicons name="volume-high" size={16} color="#4A90E2" />
+                  <Ionicons 
+                    name={currentSpeakingMessageId === message.id && isSpeaking ? "stop" : "volume-high"} 
+                    size={16} 
+                    color={currentSpeakingMessageId === message.id && isSpeaking ? "#FF6B6B" : "#4A90E2"} 
+                  />
                 </TouchableOpacity>
               )}
             </View>
@@ -393,6 +431,9 @@ const styles = StyleSheet.create({
     padding: 4,
     borderRadius: 12,
     backgroundColor: '#F0F8FF',
+  },
+  speakButtonActive: {
+    backgroundColor: '#FFE5E5',
   },
   messageTime: {
     fontSize: 12,
