@@ -1,15 +1,19 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from models.schemas import ChatRequest, ChatResponse
 from services.gemini_service import get_gemini_service
 from services.firebase_service import firebase_service
+from services.audio_service import AudioService
 import uuid
 from datetime import datetime, timedelta
 import logging
 import requests
+import tempfile
+import os
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+audio_service = AudioService()
 
 async def get_calendar_data():
     """Takvim verilerini al"""
@@ -421,4 +425,52 @@ async def chat_health():
         return {
             "status": "unhealthy",
             "error": str(e)
-        } 
+        }
+
+@router.post("/audio-message", response_model=ChatResponse)
+async def send_audio_message(file: UploadFile = File(...), user_id: str = "default"):
+    """
+    Sesli mesajı işle ve AI yanıtı döndür
+    """
+    temp_file_path = None
+    try:
+        # Geçici dosya oluştur
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.filename.split('.')[-1]}") as temp_file:
+            temp_file_path = temp_file.name
+            # Ses dosyasını geçici dosyaya yaz
+            file_content = await file.read()
+            temp_file.write(file_content)
+        
+        logger.info(f"Audio file saved to: {temp_file_path}")
+        
+        # Ses dosyasını metne dönüştür
+        text = audio_service.speech_to_text(temp_file_path)
+        logger.info(f"Speech to text result: {text}")
+        
+        # Eğer ses tanıma başarısızsa hata mesajı döndür
+        if not text or text.startswith("Ses"):
+            return ChatResponse(
+                message_id=str(uuid.uuid4()),
+                response=text or "Ses dosyası işlenemedi. Lütfen tekrar deneyin.",
+                timestamp=datetime.now().isoformat()
+            )
+        
+        # Metni normal mesaj olarak işle
+        chat_request = ChatRequest(message=text, user_id=user_id)
+        response = await send_message(chat_request)
+        
+        # Yanıta orijinal ses metnini ekle
+        response.original_audio_text = text
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Sesli mesaj işlenirken hata oluştu: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Sesli mesaj işlenirken hata oluştu: {str(e)}"
+        )
+    finally:
+        # Geçici dosyayı temizle
+        if temp_file_path:
+            audio_service.cleanup_temp_file(temp_file_path) 

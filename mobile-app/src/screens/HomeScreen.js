@@ -28,11 +28,14 @@ export default function HomeScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recording, setRecording] = useState(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
   const scrollViewRef = useRef();
+  const durationInterval = useRef();
 
   // Ses kaydı başlat
   const startRecording = async () => {
     try {
+      // Mikrofon izni al
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Hata', 'Mikrofon izni gerekli');
@@ -47,26 +50,105 @@ export default function HomeScreen() {
       const { recording } = await Audio.Recording.createAsync(
         Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY
       );
+      
       setRecording(recording);
       setIsRecording(true);
+      setRecordingDuration(0);
+      
+      // Süre sayacını başlat
+      durationInterval.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+      
+      console.log('Ses kaydı başlatıldı');
     } catch (err) {
       console.error('Ses kaydı başlatılamadı:', err);
       Alert.alert('Hata', 'Ses kaydı başlatılamadı');
     }
   };
 
-  // Ses kaydı durdur
+  // Ses kaydı durdur ve gönder
   const stopRecording = async () => {
     if (!recording) return;
 
-    setIsRecording(false);
-    await recording.stopAndUnloadAsync();
-    const uri = recording.getURI();
-    setRecording(null);
+    try {
+      setIsRecording(false);
+      clearInterval(durationInterval.current);
+      
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      setRecording(null);
+      setRecordingDuration(0);
 
-    // Ses dosyasını metne çevir (şimdilik placeholder)
-    // Gerçek uygulamada speech-to-text servisi kullanılacak
-    Alert.alert('Bilgi', 'Ses kaydı tamamlandı. Şimdilik metin girişi kullanın.');
+      console.log('Ses kaydı tamamlandı:', uri);
+
+      if (uri) {
+        // Sesli mesajı backend'e gönder
+        await sendAudioMessage(uri);
+      }
+    } catch (error) {
+      console.error('Ses kaydı durdurma hatası:', error);
+      Alert.alert('Hata', 'Ses kaydı işlenemedi');
+    }
+  };
+
+  // Sesli mesaj gönder
+  const sendAudioMessage = async (audioUri) => {
+    // Kullanıcı mesajını ekle (ses ikonu ile)
+    const userMessage = {
+      id: Date.now(),
+      text: '🎤 Sesli mesaj',
+      isUser: true,
+      isAudio: true,
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setIsLoading(true);
+
+    try {
+      // Backend'e sesli mesaj gönder
+      const response = await apiService.sendAudioMessage(audioUri);
+      
+      const aiMessage = {
+        id: Date.now() + 1,
+        text: response.response || 'Üzgünüm, yanıt alamadım.',
+        isUser: false,
+        timestamp: new Date(),
+        originalAudioText: response.original_audio_text,
+      };
+
+      setMessages(prev => [...prev, aiMessage]);
+
+      // Eğer ses metni varsa, kullanıcıya göster
+      if (response.original_audio_text) {
+        // Kullanıcı mesajını güncelle
+        setMessages(prev => prev.map(msg => 
+          msg.id === userMessage.id 
+            ? { ...msg, text: `🎤 "${response.original_audio_text}"` }
+            : msg
+        ));
+      }
+
+      // Yanıtı sesli oku
+      Speech.speak(aiMessage.text, {
+        language: 'tr-TR',
+        pitch: 1.0,
+        rate: 0.8,
+      });
+
+    } catch (error) {
+      console.error('Sesli mesaj gönderme hatası:', error);
+      const errorMessage = {
+        id: Date.now() + 1,
+        text: 'Üzgünüm, sesli mesajınızı işleyemedim. Lütfen tekrar deneyin.',
+        isUser: false,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Mesaj gönder
@@ -208,14 +290,20 @@ export default function HomeScreen() {
         />
         
         <TouchableOpacity
-          style={styles.voiceButton}
+          style={[styles.voiceButton, isRecording && styles.voiceButtonRecording]}
           onPress={isRecording ? stopRecording : startRecording}
+          disabled={isLoading}
         >
           <Ionicons 
             name={isRecording ? 'stop' : 'mic'} 
             size={24} 
-            color={isRecording ? '#FF4444' : '#4A90E2'} 
+            color={isRecording ? '#FFFFFF' : '#4A90E2'} 
           />
+          {isRecording && (
+            <Text style={styles.recordingDuration}>
+              {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
+            </Text>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -320,6 +408,19 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 25,
     backgroundColor: '#F0F0F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 50,
+  },
+  voiceButtonRecording: {
+    backgroundColor: '#FF4444',
+    paddingHorizontal: 16,
+  },
+  recordingDuration: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: 'bold',
   },
   sendButton: {
     marginLeft: 8,

@@ -16,6 +16,7 @@ class ChatResponse(BaseModel):
     response: str = Field(..., description="AI yanıtı")
     message_id: str = Field(..., description="Mesaj ID")
     timestamp: datetime = Field(default_factory=datetime.now)
+    original_audio_text: Optional[str] = Field(None, description="Orijinal ses metni")
 
 class NoteRequest(BaseModel):
     title: str = Field(..., description="Not başlığı")

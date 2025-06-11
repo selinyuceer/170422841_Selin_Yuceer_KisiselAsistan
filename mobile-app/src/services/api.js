@@ -52,6 +52,44 @@ export const apiService = {
     }
   },
 
+  // Audio Message API
+  async sendAudioMessage(audioUri, userId = 'default') {
+    try {
+      console.log('Sending audio message:', audioUri);
+      console.log('API URL:', `${API_BASE_URL}/api/chat/audio-message`);
+      
+      // FormData oluştur
+      const formData = new FormData();
+      formData.append('file', {
+        uri: audioUri,
+        type: 'audio/m4a',
+        name: 'audio_message.m4a',
+      });
+      formData.append('user_id', userId);
+      
+      // Ses mesajı için özel timeout (60 saniye)
+      const response = await axios.post(`${API_BASE_URL}/api/chat/audio-message`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 60000
+      });
+      
+      console.log('Audio response received:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Audio API Error:', error);
+      console.error('Error details:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      
+      if (error.code === 'ECONNABORTED') {
+        throw new Error('Ses mesajı zaman aşımına uğradı. Lütfen tekrar deneyin.');
+      }
+      
+      throw new Error('Sesli mesaj gönderilemedi');
+    }
+  },
+
   // Chat History API
   async getChatHistory(userId = 'default', limit = 50) {
     try {
