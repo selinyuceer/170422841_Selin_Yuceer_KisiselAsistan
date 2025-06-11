@@ -138,12 +138,7 @@ export default function HomeScreen() {
         ));
       }
 
-      // Yanıtı sesli oku
-      Speech.speak(aiMessage.text, {
-        language: 'tr-TR',
-        pitch: 1.0,
-        rate: 0.8,
-      });
+      // Otomatik sesli okuma kaldırıldı - sadece buton ile okuyacak
 
     } catch (error) {
       console.error('Sesli mesaj gönderme hatası:', error);
@@ -192,12 +187,7 @@ export default function HomeScreen() {
 
       setMessages(prev => [...prev, aiMessage]);
 
-      // Yanıtı sesli oku
-      Speech.speak(aiMessage.text, {
-        language: 'tr-TR',
-        pitch: 1.0,
-        rate: 0.8,
-      });
+      // Otomatik sesli okuma kaldırıldı - sadece buton ile okuyacak
 
     } catch (error) {
       console.error('Mesaj gönderme hatası:', error);
