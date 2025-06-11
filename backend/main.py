@@ -8,6 +8,9 @@ import logging
 # Routers
 from routers import chat, notes, calendar, weather, reminders
 
+# Services
+from services.firebase_service import firebase_service
+
 # Load environment variables
 load_dotenv()
 

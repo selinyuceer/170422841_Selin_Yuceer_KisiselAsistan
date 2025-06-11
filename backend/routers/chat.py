@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from models.schemas import ChatRequest, ChatResponse
 from services.gemini_service import get_gemini_service
+from services.firebase_service import firebase_service
 import uuid
 from datetime import datetime, timedelta
 import logging
@@ -20,25 +21,14 @@ async def get_calendar_data():
     except:
         return {"events": [], "count": 0}
 
-async def get_weather_data(city="Istanbul"):
+async def get_weather_data():
     """Hava durumu verilerini al"""
     try:
-        # Weather router'ından doğrudan veri al
-        from routers.weather import get_current_weather
-        from models.schemas import WeatherRequest
-        
-        weather_request = WeatherRequest(city=city)
-        weather_response = await get_current_weather(weather_request)
-        
-        return {
-            "city": weather_response.city,
-            "temperature": weather_response.temperature,
-            "condition": weather_response.description,
-            "humidity": weather_response.humidity,
-            "wind_speed": weather_response.wind_speed
-        }
-    except Exception as e:
-        print(f"Weather data error: {e}")
+        response = requests.get("http://localhost:8000/api/weather/?city=Istanbul", timeout=5)
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except:
         return None
 
 async def save_note(title: str, content: str):
@@ -299,6 +289,20 @@ async def send_message(request: ChatRequest):
             context
         )
         
+        # Chat mesajını Firebase'e kaydet
+        user_id = request.user_id or "default"
+        if firebase_service.is_available():
+            try:
+                firebase_service.save_chat_message(
+                    message=request.message,
+                    response=ai_response,
+                    user_id=user_id,
+                    intent=intent
+                )
+                logger.info(f"Chat message saved to Firebase for user: {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to save chat message to Firebase: {e}")
+        
         # Yanıt oluştur
         response = ChatResponse(
             response=ai_response,
@@ -306,7 +310,7 @@ async def send_message(request: ChatRequest):
             timestamp=datetime.now()
         )
         
-        logger.info(f"Chat response generated for user: {request.user_id}")
+        logger.info(f"Chat response generated for user: {user_id}")
         return response
         
     except Exception as e:
@@ -314,6 +318,64 @@ async def send_message(request: ChatRequest):
         raise HTTPException(
             status_code=500,
             detail="Mesaj işlenirken hata oluştu"
+        )
+
+@router.get("/history/{user_id}")
+async def get_chat_history(user_id: str, limit: int = 50):
+    """
+    Kullanıcının chat geçmişini getir
+    """
+    try:
+        if firebase_service.is_available():
+            chat_history = firebase_service.get_chat_history(user_id=user_id, limit=limit)
+            return {
+                "user_id": user_id,
+                "count": len(chat_history),
+                "messages": chat_history
+            }
+        else:
+            return {
+                "user_id": user_id,
+                "count": 0,
+                "messages": [],
+                "note": "Firebase kullanılamıyor, chat geçmişi kaydedilmiyor"
+            }
+        
+    except Exception as e:
+        logger.error(f"Chat history error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Chat geçmişi getirilirken hata oluştu"
+        )
+
+@router.delete("/history/{user_id}")
+async def delete_chat_history(user_id: str):
+    """
+    Kullanıcının chat geçmişini sil
+    """
+    try:
+        if firebase_service.is_available():
+            if firebase_service.delete_chat_history(user_id=user_id):
+                return {
+                    "message": "Chat geçmişi başarıyla silindi",
+                    "user_id": user_id
+                }
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Chat geçmişi silinirken hata oluştu"
+                )
+        else:
+            return {
+                "message": "Firebase kullanılamıyor, silinecek chat geçmişi yok",
+                "user_id": user_id
+            }
+        
+    except Exception as e:
+        logger.error(f"Chat history deletion error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Chat geçmişi silinirken hata oluştu"
         )
 
 @router.post("/analyze-intent")
@@ -350,6 +412,7 @@ async def chat_health():
         return {
             "status": "healthy",
             "gemini_service": "active",
+            "firebase_service": "active" if firebase_service.is_available() else "inactive",
             "test_response": test_response[:50] + "..." if len(test_response) > 50 else test_response
         }
         

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from models.schemas import NoteRequest, NoteResponse
+from services.firebase_service import firebase_service
 from typing import List
 import uuid
 from datetime import datetime
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Geçici in-memory storage (sonra Firebase ile değiştirilecek)
+# Geçici in-memory storage (Firebase kullanılamadığında fallback)
 notes_storage = {}
 
 @router.get("/")
@@ -18,6 +19,15 @@ async def get_all_notes():
     Tüm notları listele (demo için)
     """
     try:
+        # Firebase kullanılabilirse Firebase'den al
+        if firebase_service.is_available():
+            firebase_notes = firebase_service.get_notes()
+            return {
+                "notes": firebase_notes,
+                "count": len(firebase_notes)
+            }
+        
+        # Firebase kullanılamazsa in-memory storage'dan al
         all_notes = [
             {
                 "id": note["id"],
@@ -50,6 +60,19 @@ async def create_note_simple(title: str, content: str):
     Basit not oluştur
     """
     try:
+        # Firebase kullanılabilirse Firebase'e kaydet
+        if firebase_service.is_available():
+            note_id = firebase_service.create_note(title, content)
+            if note_id:
+                logger.info(f"Note created in Firebase: {note_id}")
+                return {
+                    "id": note_id,
+                    "title": title,
+                    "content": content,
+                    "message": "Not başarıyla oluşturuldu (Firebase)"
+                }
+        
+        # Firebase kullanılamazsa in-memory storage'a kaydet
         note_id = str(uuid.uuid4())
         now = datetime.now()
         
@@ -65,13 +88,13 @@ async def create_note_simple(title: str, content: str):
         
         notes_storage[note_id] = note
         
-        logger.info(f"Note created: {note_id}")
+        logger.info(f"Note created in memory: {note_id}")
         return {
             "id": note_id,
             "title": title,
             "content": content,
             "created_at": now.isoformat(),
-            "message": "Not başarıyla oluşturuldu"
+            "message": "Not başarıyla oluşturuldu (Memory)"
         }
         
     except Exception as e:
