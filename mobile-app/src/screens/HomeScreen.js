@@ -220,6 +220,15 @@ export default function HomeScreen() {
     });
   };
 
+  // Mesajı sesli okuma
+  const speakMessage = (text) => {
+    Speech.speak(text, {
+      language: 'tr-TR',
+      pitch: 1.0,
+      rate: 0.8,
+    });
+  };
+
   return (
     <KeyboardAvoidingView 
       style={styles.container}
@@ -239,12 +248,25 @@ export default function HomeScreen() {
               message.isUser ? styles.userMessage : styles.aiMessage,
             ]}
           >
-            <Text style={[
-              styles.messageText,
-              message.isUser ? styles.userMessageText : styles.aiMessageText,
-            ]}>
-              {message.text}
-            </Text>
+            <View style={styles.messageContent}>
+              <Text style={[
+                styles.messageText,
+                message.isUser ? styles.userMessageText : styles.aiMessageText,
+              ]}>
+                {message.text}
+              </Text>
+              
+              {/* AI mesajları için sesli dinleme butonu */}
+              {!message.isUser && (
+                <TouchableOpacity
+                  style={styles.speakButton}
+                  onPress={() => speakMessage(message.text)}
+                >
+                  <Ionicons name="volume-high" size={16} color="#4A90E2" />
+                </TouchableOpacity>
+              )}
+            </View>
+            
             <Text style={[
               styles.messageTime,
               message.isUser ? styles.userMessageTime : styles.aiMessageTime,
@@ -352,6 +374,17 @@ const styles = StyleSheet.create({
   },
   aiMessageText: {
     color: '#333',
+  },
+  messageContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  speakButton: {
+    marginLeft: 8,
+    padding: 4,
+    borderRadius: 12,
+    backgroundColor: '#F0F8FF',
   },
   messageTime: {
     fontSize: 12,
