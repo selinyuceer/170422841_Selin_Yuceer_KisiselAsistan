@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // API Base URL - Geliştirme ortamı için
-const API_BASE_URL = 'http://192.168.1.102:8000';
+const API_BASE_URL = 'http://192.168.87.159:8000';
 
 // Axios instance oluştur
 const apiClient = axios.create({

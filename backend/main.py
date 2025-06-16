@@ -34,6 +34,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Firebase yapılandırması firebase_service.py içinde yapılıyor
+
 # Include routers
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(notes.router, prefix="/api/notes", tags=["Notes"])

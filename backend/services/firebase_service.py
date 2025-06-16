@@ -19,6 +19,10 @@ class FirebaseService:
             # Service account key dosyasının yolunu al
             key_path = os.getenv('FIREBASE_SERVICE_ACCOUNT_KEY_PATH')
             
+            # Debug: Environment variable'ı kontrol et
+            print(f"DEBUG: FIREBASE_SERVICE_ACCOUNT_KEY_PATH = {key_path}")
+            print(f"DEBUG: File exists check = {os.path.exists(key_path) if key_path else 'key_path is None'}")
+            
             if key_path and os.path.exists(key_path):
                 # Service account key ile başlat
                 credentials = service_account.Credentials.from_service_account_file(key_path)
