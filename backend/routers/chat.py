@@ -105,21 +105,23 @@ async def send_message(request: ChatRequest):
                 context["weather"] = weather_data
         
         # Not kaydetme işlemi - Daha güçlü kontrol
-        note_keywords = ["not al", "kaydet", "not et", "not olarak", "not ekle", "not olarak ekle", "not kaydet", "not oluştur", "not yaz", "not tut", "bunu not", "notu kaydet"]
+        note_keywords = ["not al", "kaydet", "not et", "not olarak", "not ekle", "not oluştur", "not yaz", "not tut", "bunu not", "notu kaydet"]
         is_note_request = intent == "note" or any(keyword in request.message.lower() for keyword in note_keywords)
         
         logger.info(f"Note check - Intent: {intent}, Message: {request.message.lower()}, Is note request: {is_note_request}")
         
         if is_note_request:
             entities = intent_data.get("entities", {})
-            title = entities.get("title", "")
+            title = entities.get("title", "").strip()
+            content = entities.get("content", "").strip()
             
-            # Mesajdan başlık ve içerik çıkarma
-            message_lower = request.message.lower()
-            content = request.message
-            
-            # Başlık çıkarma mantığı
+            # AI'ın çıkardığı başlık varsa onu kullan
             if not title:
+                # Fallback: Mesajdan başlık ve içerik çıkarma
+                message_lower = request.message.lower()
+                content = request.message
+                
+                # Başlık çıkarma mantığı
                 if ":" in request.message:
                     # "Not al: başlık" formatı
                     parts = request.message.split(":", 1)
@@ -141,65 +143,66 @@ async def send_message(request: ChatRequest):
                             remaining = remaining[1:].strip()
                         title = remaining if remaining else "Yeni Not"
                         content = remaining if remaining else request.message
-                elif "not olarak" in message_lower or "not ekle" in message_lower:
-                    # "not olarak ekle" veya "not ekle" durumu
-                    # Mesajın kendisini not olarak kaydet
-                    if "not olarak ekle" in message_lower:
-                        # "not olarak ekle" ifadesini temizle
-                        clean_content = request.message.replace("not olarak ekle", "").strip()
-                        if clean_content:
-                            title = clean_content[:30] + "..." if len(clean_content) > 30 else clean_content
-                            content = clean_content
-                        else:
-                            title = "Yeni Not"
-                            content = "Boş not"
-                    else:
-                        # "not ekle" durumu
-                        clean_content = request.message.replace("not ekle", "").strip()
-                        if clean_content:
-                            title = clean_content[:30] + "..." if len(clean_content) > 30 else clean_content
-                            content = clean_content
-                        else:
-                            title = "Yeni Not"
-                            content = request.message
+                elif any(keyword in message_lower for keyword in ["not olarak", "not et", "not ekle"]):
+                    # "X not olarak ekle" formatı - X'i başlık yap
+                    for keyword in ["not olarak ekle", "not olarak", "not et", "not ekle"]:
+                        if keyword in message_lower:
+                            idx = message_lower.find(keyword)
+                            if idx > 0:
+                                title = request.message[:idx].strip()
+                                content = title
+                                break
                 else:
-                    # Varsayılan başlık
-                    words = request.message.split()
-                    if len(words) > 3:
-                        title = " ".join(words[:4])  # İlk 4 kelimeyi başlık yap
-                    else:
-                        title = request.message[:20] + "..." if len(request.message) > 20 else request.message
+                    title = "Yeni Not"
+                    content = request.message
             
-            # Başlık çok uzunsa kısalt
-            if len(title) > 50:
-                title = title[:47] + "..."
+            # İçerik yoksa başlığı içerik yap
+            if not content:
+                content = title if title else request.message
+            
+            # Başlık yoksa varsayılan
+            if not title:
+                title = "Yeni Not"
             
             # Notu kaydet
+            logger.info(f"Saving note - Title: {title}, Content: {content}")
             saved_note = await save_note(title, content)
+            logger.info(f"Note save result: {saved_note}")
             if saved_note:
                 context["note_saved"] = saved_note
         
         # Etkinlik oluşturma işlemi
-        calendar_keywords = ["etkinlik", "toplantı", "randevu", "takvim", "etkinlik oluştur", "toplantı kur"]
+        calendar_keywords = ["etkinlik", "toplantı", "randevu", "takvim", "etkinlik oluştur", "toplantı kur", "randevu al"]
         is_calendar_request = intent == "calendar" or any(keyword in request.message.lower() for keyword in calendar_keywords)
         
         logger.info(f"Calendar check - Intent: {intent}, Message: {request.message.lower()}, Is calendar request: {is_calendar_request}")
         
         if is_calendar_request:
             entities = intent_data.get("entities", {})
-            title = entities.get("title", "")
-            datetime_str = entities.get("datetime", "")
+            title = entities.get("title", "").strip()
+            datetime_str = entities.get("datetime", "").strip()
+            ai_description = entities.get("description", "").strip()
             
-            # Mesajdan başlık ve tarih çıkarma
-            message_lower = request.message.lower()
-            
-            # Başlık çıkarma mantığı
+            # AI'ın çıkardığı başlık varsa onu kullan, yoksa fallback mantığı
             if not title:
+                # Fallback: Mesajdan başlık çıkarma
+                message_lower = request.message.lower()
+                
                 if ":" in request.message:
                     # "Etkinlik oluştur: başlık" formatı
                     parts = request.message.split(":", 1)
                     if len(parts) == 2:
                         title = parts[1].strip()
+                        # Tarih ifadelerini temizle
+                        import re
+                        date_patterns = [
+                            r'\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b',  # 12/06/2025
+                            r'\b\d{1,2}:\d{2}\b',  # 10:00
+                            r'\byarın\b', r'\bbugün\b', r'\bgelecek\s+\w+\b'
+                        ]
+                        for pattern in date_patterns:
+                            title = re.sub(pattern, '', title, flags=re.IGNORECASE)
+                        title = title.strip()
                 elif any(word in message_lower for word in ["etkinlik", "toplantı", "randevu"]):
                     # Anahtar kelimeden sonrasını başlık yap
                     for keyword in ["etkinlik oluştur", "toplantı kur", "randevu al", "etkinlik", "toplantı", "randevu"]:
@@ -210,7 +213,6 @@ async def send_message(request: ChatRequest):
                                 if remaining:
                                     # Tarih ifadelerini temizle
                                     import re
-                                    # Tarih kalıplarını bul ve temizle
                                     date_patterns = [
                                         r'\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b',  # 12/06/2025
                                         r'\b\d{1,2}:\d{2}\b',  # 10:00
@@ -225,40 +227,28 @@ async def send_message(request: ChatRequest):
                 if not title:
                     title = "Yeni Etkinlik"
             
-            # Tarih çıkarma (basit)
+            # AI'ın çıkardığı tarih varsa onu kullan, yoksa fallback mantığı
             if not datetime_str:
                 import re
                 from datetime import datetime as dt, timedelta as td
                 
-                # Yarın kontrolü
-                if "yarın" in message_lower:
-                    tomorrow = dt.now() + td(days=1)
-                    # Saat varsa çıkar
-                    time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
-                    if time_match:
-                        hour, minute = int(time_match.group(1)), int(time_match.group(2))
-                        datetime_str = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
-                    else:
-                        datetime_str = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
+                # Türkçe ay isimleri
+                turkish_months = {
+                    'ocak': 1, 'şubat': 2, 'mart': 3, 'nisan': 4, 'mayıs': 5, 'haziran': 6,
+                    'temmuz': 7, 'ağustos': 8, 'eylül': 9, 'ekim': 10, 'kasım': 11, 'aralık': 12
+                }
                 
-                # Bugün kontrolü
-                elif "bugün" in message_lower:
-                    today = dt.now()
-                    time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
-                    if time_match:
-                        hour, minute = int(time_match.group(1)), int(time_match.group(2))
-                        datetime_str = today.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
-                    else:
-                        datetime_str = today.replace(hour=14, minute=0, second=0, microsecond=0).isoformat()
+                message_lower = request.message.lower()
                 
-                # Tarih formatı kontrolü (12/06/2025)
-                else:
-                    date_match = re.search(r'\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b', request.message)
-                    if date_match:
-                        day, month, year = int(date_match.group(1)), int(date_match.group(2)), int(date_match.group(3))
-                        if year < 100:
-                            year += 2000
+                # Türkçe tarih formatı kontrolü (21 haziran, 15 mayıs vb.)
+                for month_name, month_num in turkish_months.items():
+                    pattern = rf'\b(\d{{1,2}})\s+{month_name}\b'
+                    match = re.search(pattern, message_lower)
+                    if match:
+                        day = int(match.group(1))
+                        year = dt.now().year
                         
+                        # Saat varsa çıkar
                         time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
                         if time_match:
                             hour, minute = int(time_match.group(1)), int(time_match.group(2))
@@ -266,18 +256,71 @@ async def send_message(request: ChatRequest):
                             hour, minute = 10, 0
                         
                         try:
-                            event_date = dt(year, month, day, hour, minute)
+                            event_date = dt(year, month_num, day, hour, minute)
                             datetime_str = event_date.isoformat()
-                        except:
-                            pass
+                            logger.info(f"Turkish date parsed: {day} {month_name} → {datetime_str}")
+                            break
+                        except ValueError:
+                            logger.warning(f"Invalid Turkish date: {day} {month_name}")
+                            continue
+                
+                # Eğer Türkçe tarih bulunamadıysa diğer formatları dene
+                if not datetime_str:
+                    # Yarın kontrolü
+                    if "yarın" in message_lower:
+                        tomorrow = dt.now() + td(days=1)
+                        # Saat varsa çıkar
+                        time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
+                        if time_match:
+                            hour, minute = int(time_match.group(1)), int(time_match.group(2))
+                            datetime_str = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
+                        else:
+                            datetime_str = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
+                    
+                    # Bugün kontrolü
+                    elif "bugün" in message_lower:
+                        today = dt.now()
+                        time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
+                        if time_match:
+                            hour, minute = int(time_match.group(1)), int(time_match.group(2))
+                            datetime_str = today.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
+                        else:
+                            datetime_str = today.replace(hour=14, minute=0, second=0, microsecond=0).isoformat()
+                    
+                    # Tarih formatı kontrolü (12/06/2025, 12.06.2025)
+                    else:
+                        date_match = re.search(r'\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b', request.message)
+                        if date_match:
+                            day, month, year = int(date_match.group(1)), int(date_match.group(2)), int(date_match.group(3))
+                            if year < 100:
+                                year += 2000
+                            
+                            time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
+                            if time_match:
+                                hour, minute = int(time_match.group(1)), int(time_match.group(2))
+                            else:
+                                hour, minute = 10, 0
+                            
+                            try:
+                                event_date = dt(year, month, day, hour, minute)
+                                datetime_str = event_date.isoformat()
+                            except ValueError:
+                                logger.warning(f"Invalid date format: {day}/{month}/{year}")
+                                pass
                 
                 # Varsayılan: yarın saat 10:00
                 if not datetime_str:
                     tomorrow = dt.now() + td(days=1)
                     datetime_str = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
+                    logger.info(f"Using default date: {datetime_str}")
             
-            # Açıklama oluştur
-            description = f"Gemini AI tarafından oluşturulan etkinlik: {request.message}"
+            logger.info(f"Final datetime_str: {datetime_str}")
+            
+            # Açıklama oluştur - AI'ın çıkardığı description varsa onu kullan
+            if ai_description:
+                description = ai_description
+            else:
+                description = f"Kullanıcı tarafından oluşturulan etkinlik: {request.message}"
             
             # Etkinliği oluştur
             logger.info(f"Creating event - Title: {title}, DateTime: {datetime_str}, Description: {description}")

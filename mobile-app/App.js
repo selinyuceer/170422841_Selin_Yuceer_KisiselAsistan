@@ -55,7 +55,9 @@ export default function App() {
         <Tab.Screen 
           name="Ana Sayfa" 
           component={HomeScreen}
-          options={{ title: 'Dijital Asistan' }}
+          options={{ 
+            headerShown: false 
+          }}
         />
         <Tab.Screen 
           name="Notlar" 

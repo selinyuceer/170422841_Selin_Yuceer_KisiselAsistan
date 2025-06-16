@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Bu uygulama sesli mesaj göndermek için mikrofon erişimi gerektirir."
-      }
+      },
+      "bundleIdentifier": "com.anonymous.mobile-app"
     },
     "android": {
       "adaptiveIcon": {

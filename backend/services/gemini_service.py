@@ -2,7 +2,7 @@ import google.generativeai as genai
 import os
 from typing import Optional, Dict, Any
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -114,44 +114,86 @@ class GeminiService:
             Intent analizi sonucu
         """
         try:
-            intent_prompt = f"""
-            Aşağıdaki kullanıcı mesajını analiz et ve amacını belirle:
+            # Dinamik tarih hesaplama
+            today = datetime.now()
+            tomorrow = today + timedelta(days=1)
             
-            Mesaj: "{user_message}"
+            intent_prompt = f"""
+            Sen bir kişisel asistan AI'sın. Kullanıcının mesajını analiz ederek ne yapmak istediğini anla ve uygun bilgileri çıkar.
+
+            Kullanıcı mesajı: "{user_message}"
+            
+            BUGÜNÜN TARİHİ: {today.strftime('%Y-%m-%d')} ({today.strftime('%d %B %Y')})
+            YARININ TARİHİ: {tomorrow.strftime('%Y-%m-%d')} ({tomorrow.strftime('%d %B %Y')})
             
             Lütfen şu formatda JSON yanıtı ver:
             {{
                 "intent": "chat|note|reminder|calendar|weather",
                 "confidence": 0.0-1.0,
                 "entities": {{
-                    "title": "başlık varsa",
-                    "datetime": "tarih/saat varsa",
-                    "location": "konum varsa"
+                    "title": "temiz başlık",
+                    "content": "not içeriği varsa",
+                    "datetime": "tarih/saat varsa ISO format",
+                    "location": "konum varsa",
+                    "description": "ek detaylar varsa"
                 }}
             }}
             
-            Intent türleri:
-            - chat: Genel sohbet
-            - note: Not alma (örnekler: "not al", "kaydet", "not olarak kaydet", "bunu not et")
-            - reminder: Hatırlatıcı kurma
-            - calendar: Takvim etkinliği (örnekler: "etkinlik oluştur", "toplantı kur", "randevu al")
-            - weather: Hava durumu
+            ÖNEMLI KURALLAR:
             
-            Not alma örnekleri:
-            - "Bunu not olarak kaydet"
-            - "Not al: toplantı yarın"
-            - "Kaydet: market listesi"
-            - "Bunu not et"
-            - "not olarak ekle"
-            - "Test notu not olarak ekle"
-            - "Market listesi not ekle"
-            - "Toplantı notları not olarak ekle"
+            1. NOT ALMA (intent: "note"):
+            - "not al", "kaydet", "not olarak", "not et", "not ekle", "not yaz" gibi ifadeler
+            - Başlık çıkarırken kullanıcının gerçek niyetini anla
+            - Örnek: "Market listesi not olarak ekle" → title: "Market Listesi"
+            - Örnek: "Bunu not et: Yarın doktora git" → title: "Yarın Doktora Git"
             
-            Etkinlik oluşturma örnekleri:
-            - "Yarın saat 10:00'da toplantı kur"
-            - "Etkinlik oluştur: Proje sunumu 15/06/2025 14:00"
-            - "Bugün 16:00'da randevu al"
-            - "Toplantı: Müşteri görüşmesi yarın"
+            2. TAKVİM ETKİNLİĞİ (intent: "calendar"):
+            - "toplantı", "etkinlik", "randevu", "takvim", "kur", "oluştur" gibi ifadeler
+            - SADECE ETKİNLİK ADINI BAŞLIK YAP, DİĞER DETAYLARI AÇIKLAMAYA KOY
+            
+            BAŞLIK ÇIKARMA PRENSİPLERİ (ÇOK ÖNEMLİ):
+            - "ismi X olsun" → SADECE X'i başlık yap
+            - "X adında" → SADECE X'i başlık yap  
+            - "X toplantısı/etkinliği" → SADECE "X Toplantısı/Etkinliği" yap
+            - Katılımcı isimleri, süre, yer gibi detayları başlığa EKLEME
+            - Gereksiz kelimeleri temizle (kur, oluştur, olsun, katılacaklar, sürecek, etc.)
+            - İlk harfleri büyük yap
+            - Başlık kısa ve öz olmalı (maksimum 3-4 kelime)
+            
+            AÇIKLAMA ÇIKARMA PRENSİPLERİ:
+            - Katılımcı bilgileri → description'a ekle
+            - Süre bilgisi → description'a ekle  
+            - Yer bilgisi → description'a ekle
+            - Diğer detaylar → description'a ekle
+            
+            TARİH/SAAT ÇIKARMA (ÇOK ÖNEMLİ):
+            - "yarın" → {tomorrow.strftime('%Y-%m-%d')} ({tomorrow.strftime('%d %B %Y')})
+            - "bugün" → {today.strftime('%Y-%m-%d')} ({today.strftime('%d %B %Y')})
+            - "X:XX" formatındaki saatleri yakala
+            - "DD/MM/YYYY" veya "DD.MM.YYYY" formatındaki tarihleri yakala
+            - ISO format olarak döndür (YYYY-MM-DDTHH:MM:SS)
+            - KULLANICININ BELİRTTİĞİ TARİHİ AYNEN KULLAN!
+            - Eğer kullanıcı "21 haziran" derse → 2025-06-21 kullan
+            - Eğer kullanıcı "17 haziran" derse → 2025-06-17 kullan
+            
+            DOĞRU Örnekler:
+            - "İsmi sabah toplantısı olsun yarın saat 9'da" → 
+              {{"intent": "calendar", "entities": {{"title": "Sabah Toplantısı", "datetime": "{tomorrow.strftime('%Y-%m-%d')}T09:00:00"}}}}
+            
+            - "21 haziran saat 10'da toplantı" → 
+              {{"intent": "calendar", "entities": {{"title": "Toplantı", "datetime": "2025-06-21T10:00:00"}}}}
+            
+            - "toplantının ismi geliştirici toplantısı olsun toplantıya katılacaklar Erencan acıoğlu ve yaklaşık 1 saat sürecek" → 
+              {{"intent": "calendar", "entities": {{"title": "Geliştirici Toplantısı", "description": "Katılımcılar: Erencan Acıoğlu, Süre: Yaklaşık 1 saat"}}}}
+            
+            - "Market listesi not olarak ekle: süt, ekmek, peynir" → 
+              {{"intent": "note", "entities": {{"title": "Market Listesi", "content": "süt, ekmek, peynir"}}}}
+            
+            YANLIŞ Örnekler (YAPMA):
+            - "Geliştirici Toplantısı Erencan Acıoğlu 1 Saat" (başlığa detay ekleme)
+            - "toplantının ismi geliştirici toplantısı olsun" (literal alma)
+            - "Sabah Toplantısı Yarın 9:00" (başlığa tarih ekleme)
+            - Kullanıcı "21 haziran" dediğinde "17 haziran" kullanma!
             """
             
             response = self.model.generate_content(intent_prompt)
