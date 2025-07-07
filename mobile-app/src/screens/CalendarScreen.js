@@ -37,6 +37,34 @@ export default function CalendarScreen() {
     setRefreshing(false);
   };
 
+  // Etkinlik sil
+  const deleteEvent = (eventId, eventTitle) => {
+    Alert.alert(
+      'Etkinlik Sil',
+      `"${eventTitle}" etkinliğini silmek istediğinizden emin misiniz?`,
+      [
+        {
+          text: 'İptal',
+          style: 'cancel',
+        },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiService.deleteCalendarEvent(eventId);
+              Alert.alert('Başarılı', 'Etkinlik silindi');
+              loadEvents(); // Listeyi yeniden yükle
+            } catch (error) {
+              console.error('Etkinlik silinirken hata:', error);
+              Alert.alert('Hata', 'Etkinlik silinemedi');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   // Tarih formatla
   const formatDateTime = (dateString) => {
     const date = new Date(dateString);
@@ -86,6 +114,13 @@ export default function CalendarScreen() {
                     </Text>
                   )}
                 </View>
+
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => deleteEvent(event.id, event.title)}
+                >
+                  <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+                </TouchableOpacity>
               </View>
             );
           })
@@ -169,5 +204,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     lineHeight: 18,
+  },
+  deleteButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#FFF0F0',
+    marginLeft: 8,
   },
 }); 

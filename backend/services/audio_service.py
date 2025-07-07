@@ -4,6 +4,7 @@ import speech_recognition as sr
 from pydub import AudioSegment
 from pydub.utils import which
 import logging
+from fastapi import UploadFile
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,33 @@ class AudioService:
         AudioSegment.converter = which("ffmpeg")
         AudioSegment.ffmpeg = which("ffmpeg")
         AudioSegment.ffprobe = which("ffprobe")
+    
+    async def transcribe_audio(self, file: UploadFile, language: str = "tr-TR") -> str:
+        """
+        UploadFile objesi ile ses dosyasını metne dönüştürür
+        """
+        temp_file_path = None
+        try:
+            # Geçici dosya oluştur
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.filename.split('.')[-1] if '.' in file.filename else 'wav'}") as temp_file:
+                temp_file_path = temp_file.name
+                # Ses dosyasını geçici dosyaya yaz
+                file_content = await file.read()
+                temp_file.write(file_content)
+            
+            logger.info(f"Audio file saved to: {temp_file_path}")
+            
+            # Ses dosyasını metne dönüştür
+            text = self.speech_to_text(temp_file_path, language)
+            return text
+            
+        except Exception as e:
+            logger.error(f"Error in transcribe_audio: {str(e)}")
+            return None
+        finally:
+            # Geçici dosyayı temizle
+            if temp_file_path:
+                self.cleanup_temp_file(temp_file_path)
         
     def convert_audio_to_wav(self, audio_file_path: str) -> str:
         """

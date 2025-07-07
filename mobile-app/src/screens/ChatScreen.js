@@ -84,12 +84,14 @@ export default function ChatScreen() {
     }
   ]);
 
-  // Hızlı öneriler
+  // Hızlı öneriler - güncellenmiş basit şablonlar
   const quickSuggestions = [
     'Bugün hava nasıl?',
-    'Yeni bir not oluştur',
+    'Not al: Market listesi',
+    'Toplantı oluştur yarın saat 10',
+    'Bitirme projesi not al',
     'Yarın toplantım var mı?',
-    'Hatırlatıcı kur',
+    'Spor antrenmanı toplantı kur',
   ];
 
   useEffect(() => {
@@ -97,7 +99,7 @@ export default function ChatScreen() {
     setMessages([
       {
         id: '1',
-        text: 'Merhaba! Size nasıl yardımcı olabilirim?',
+        text: 'Merhaba! Size nasıl yardımcı olabilirim? 👋\n\nBasit komutlar:\n• "Not al: başlık" - hızlı not alma\n• "Toplantı oluştur başlık" - etkinlik oluşturma\n• "Bugün hava nasıl?" - hava durumu',
         isUser: false,
         timestamp: new Date().toISOString(),
       },
@@ -172,7 +174,7 @@ export default function ChatScreen() {
       setMessages([
         {
           id: '1',
-          text: 'Merhaba! Size nasıl yardımcı olabilirim?',
+          text: 'Merhaba! Size nasıl yardımcı olabilirim? 👋\n\nBasit komutlar:\n• "Not al: başlık" - hızlı not alma\n• "Toplantı oluştur başlık" - etkinlik oluşturma\n• "Bugün hava nasıl?" - hava durumu',
           isUser: false,
           timestamp: new Date().toISOString(),
         },
@@ -199,10 +201,11 @@ export default function ChatScreen() {
             // Mevcut sohbeti geçmişe kaydet
             saveCurrentChatToHistory();
             
+            // Yeni sohbet başlat
             setMessages([
               {
                 id: '1',
-                text: 'Merhaba! Size nasıl yardımcı olabilirim?',
+                text: 'Merhaba! Size nasıl yardımcı olabilirim? 👋\n\nBasit komutlar:\n• "Not al: başlık" - hızlı not alma\n• "Toplantı oluştur başlık" - etkinlik oluşturma\n• "Bugün hava nasıl?" - hava durumu',
                 isUser: false,
                 timestamp: new Date().toISOString(),
               },
@@ -228,24 +231,22 @@ export default function ChatScreen() {
 
   const saveCurrentChatToHistory = () => {
     if (messages.length > 1) {
-      const newChat = {
+      const newChatHistory = {
         id: Date.now().toString(),
-        title: `Sohbet ${chatHistory.length + 1}`,
-        lastMessage: messages[messages.length - 1].text.substring(0, 50) + '...',
-        timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-        messages: [...messages]
+        title: `Sohbet ${new Date().toLocaleDateString()}`,
+        lastMessage: messages[messages.length - 1]?.text.substring(0, 50) + '...',
+        timestamp: new Date().toLocaleTimeString().substring(0, 5),
+        messages: messages,
       };
-      setChatHistory(prev => [newChat, ...prev]);
+      setChatHistory(prev => [newChatHistory, ...prev]);
     }
   };
 
   const startRecording = async () => {
     try {
-      console.log('Ses kaydı izni isteniyor...');
-      const permission = await Audio.requestPermissionsAsync();
-      
-      if (permission.status !== 'granted') {
-        Alert.alert('İzin Gerekli', 'Ses kaydı için mikrofon izni gereklidir.');
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Hata', 'Mikrofon izni gerekli!');
         return;
       }
 
@@ -254,64 +255,48 @@ export default function ChatScreen() {
         playsInSilentModeIOS: true,
       });
 
-      console.log('Ses kaydı başlatılıyor...');
       const { recording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
-      
       setRecording(recording);
       setIsRecording(true);
-      console.log('Ses kaydı başlatıldı');
-    } catch (err) {
-      console.error('Ses kaydı başlatılamadı:', err);
-      Alert.alert('Hata', 'Ses kaydı başlatılamadı.');
+    } catch (error) {
+      console.error('Kayıt başlatma hatası:', error);
+      Alert.alert('Hata', 'Kayıt başlatılamadı');
     }
   };
 
   const stopRecording = async () => {
-    if (!recording) return;
-
     try {
-      console.log('Ses kaydı durduruluyor...');
       setIsRecording(false);
       await recording.stopAndUnloadAsync();
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+      });
       
       const uri = recording.getURI();
-      console.log('Ses kaydı tamamlandı:', uri);
+      console.log('Kayıt tamamlandı:', uri);
       
       setRecording(null);
-      
-      if (uri) {
-        await sendAudioMessageToAPI(uri);
-      }
+      sendAudioMessageToAPI(uri);
     } catch (error) {
-      console.error('Ses kaydı durdurulurken hata:', error);
-      Alert.alert('Hata', 'Ses kaydı kaydedilemedi.');
+      console.error('Kayıt durdurma hatası:', error);
+      Alert.alert('Hata', 'Kayıt durdurulamadı');
     }
   };
 
   const sendAudioMessageToAPI = async (audioUri) => {
     setIsLoading(true);
-    
-    // İlk mesaj gönderildiğinde önerileri gizle
-    if (showSuggestions) {
-      setShowSuggestions(false);
-    }
-    
     try {
-      console.log('Sending audio message:', audioUri);
       const response = await sendAudioMessage(audioUri);
-      console.log('Audio response received:', response);
-
-      // Kullanıcının ses mesajını ekle
+      
       const userMessage = {
         id: Date.now().toString(),
-        text: `🎤 Sesli mesaj: "${response.original_audio_text}"`,
+        text: '🎤 Sesli mesaj',
         isUser: true,
-        timestamp: response.timestamp,
+        timestamp: new Date().toISOString(),
       };
 
-      // Bot cevabını ekle
       const botMessage = {
         id: (Date.now() + 1).toString(),
         text: response.response,
@@ -320,9 +305,13 @@ export default function ChatScreen() {
       };
 
       setMessages(prev => [...prev, userMessage, botMessage]);
+      
+      if (showSuggestions) {
+        setShowSuggestions(false);
+      }
     } catch (error) {
       console.error('Sesli mesaj gönderme hatası:', error);
-      Alert.alert('Hata', 'Sesli mesaj gönderilemedi.');
+      Alert.alert('Hata', 'Sesli mesaj gönderilemedi');
     } finally {
       setIsLoading(false);
     }
@@ -331,7 +320,6 @@ export default function ChatScreen() {
   const speakText = (text) => {
     Speech.speak(text, {
       language: 'tr-TR',
-      pitch: 1.0,
       rate: 0.8,
     });
   };
@@ -341,23 +329,24 @@ export default function ChatScreen() {
       styles.messageContainer,
       item.isUser ? styles.userMessage : styles.botMessage
     ]}>
-      <View style={[
-        styles.messageBubble,
-        item.isUser ? styles.userBubble : styles.botBubble
+      <Text style={[
+        styles.messageText,
+        item.isUser ? styles.userMessageText : styles.botMessageText
       ]}>
-        <Text style={[
-          styles.messageText,
-          item.isUser ? styles.userText : styles.botText
-        ]}>
-          {item.text}
-        </Text>
-      </View>
+        {item.text}
+      </Text>
+      <Text style={[
+        styles.messageTime,
+        item.isUser ? styles.userMessageTime : styles.botMessageTime
+      ]}>
+        {new Date(item.timestamp).toLocaleTimeString().substring(0, 5)}
+      </Text>
       {!item.isUser && (
         <TouchableOpacity
           style={styles.speakButton}
           onPress={() => speakText(item.text)}
         >
-          <Ionicons name="volume-high" size={20} color="#007AFF" />
+          <Ionicons name="volume-high" size={16} color="#666" />
         </TouchableOpacity>
       )}
     </View>

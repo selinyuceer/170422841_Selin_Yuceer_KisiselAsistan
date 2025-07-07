@@ -326,4 +326,8 @@ export const apiService = {
   }
 };
 
+// Named exports for commonly used functions
+export const sendMessage = apiService.sendMessage.bind(apiService);
+export const sendAudioMessage = apiService.sendAudioMessage.bind(apiService);
+
 export default apiService; 

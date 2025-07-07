@@ -188,15 +188,29 @@ async def delete_note(note_id: str):
     Notu sil
     """
     try:
-        if note_id not in notes_storage:
+        deleted = False
+        
+        # Önce Firebase'den silmeyi dene
+        if firebase_service.is_available():
+            firebase_deleted = firebase_service.delete_note(note_id)
+            if firebase_deleted:
+                deleted = True
+                logger.info(f"Note deleted from Firebase: {note_id}")
+        
+        # In-memory storage'dan da sil (varsa)
+        if note_id in notes_storage:
+            deleted_note = notes_storage.pop(note_id)
+            deleted = True
+            logger.info(f"Note deleted from memory: {note_id}")
+        
+        # Hiçbir yerden silinemedi
+        if not deleted:
             raise HTTPException(
                 status_code=404,
                 detail="Not bulunamadı"
             )
         
-        deleted_note = notes_storage.pop(note_id)
-        
-        logger.info(f"Note deleted: {note_id}")
+        logger.info(f"Note successfully deleted: {note_id}")
         return {
             "message": "Not başarıyla silindi",
             "deleted_note_id": note_id

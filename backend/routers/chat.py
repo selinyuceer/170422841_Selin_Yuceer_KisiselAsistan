@@ -9,6 +9,7 @@ import logging
 import requests
 import tempfile
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -16,23 +17,92 @@ router = APIRouter()
 audio_service = AudioService()
 
 async def get_calendar_data():
-    """Takvim verilerini al"""
+    """Takvim verilerini al - Firebase'den direkt"""
     try:
-        response = requests.get("http://localhost:8000/api/calendar/events", timeout=5)
-        if response.status_code == 200:
-            return response.json()
+        # Firebase'den direkt al
+        events = firebase_service.get_events() if firebase_service.is_available() else []
+        logger.info(f"Firebase returned {len(events)} calendar events")
+        
+        # Eğer events dict listesi değilse düzelt
+        if events and isinstance(events, list):
+            # Firebase format'ını düzelt
+            formatted_events = []
+            for event in events:
+                if isinstance(event, dict):
+                    formatted_events.append({
+                        "id": event.get("id", ""),
+                        "title": event.get("title", ""),
+                        "datetime": event.get("datetime", ""),
+                        "description": event.get("description", "")
+                    })
+            
+            return {"events": formatted_events, "count": len(formatted_events)}
+        
         return {"events": [], "count": 0}
-    except:
+    except Exception as e:
+        logger.error(f"Error getting calendar data: {e}")
         return {"events": [], "count": 0}
 
-async def get_weather_data():
-    """Hava durumu verilerini al"""
+def extract_city_from_message(message: str) -> str:
+    """Mesajdan şehir ismini çıkar"""
+    message_lower = message.lower()
+    
+    # Türkiye'deki büyük şehirler
+    cities = {
+        "istanbul": "Istanbul",
+        "ankara": "Ankara", 
+        "izmir": "Izmir",
+        "bursa": "Bursa",
+        "antalya": "Antalya",
+        "adana": "Adana",
+        "konya": "Konya",
+        "gaziantep": "Gaziantep",
+        "mersin": "Mersin",
+        "diyarbakır": "Diyarbakir",
+        "kayseri": "Kayseri",
+        "eskişehir": "Eskisehir",
+        "samsun": "Samsun",
+        "denizli": "Denizli",
+        "şanlıurfa": "Sanliurfa",
+        "adapazarı": "Adapazari",
+        "malatya": "Malatya",
+        "kahramanmaraş": "Kahramanmaras",
+        "erzurum": "Erzurum",
+        "van": "Van",
+        "batman": "Batman",
+        "elazığ": "Elazig",
+        "şırnak": "Sirnak",
+        "siirt": "Siirt",
+        "mardin": "Mardin",
+        "manisa": "Manisa",
+        "muğla": "Mugla",
+        "balıkesir": "Balikesir",
+        "tekirdağ": "Tekirdag",
+        "aydın": "Aydin",
+        "sakarya": "Sakarya",
+        "ordu": "Ordu",
+        "trabzon": "Trabzon",
+        "hatay": "Hatay",
+        "uşak": "Usak"
+    }
+    
+    # Mesajda şehir ismi var mı kontrol et
+    for city_key, city_name in cities.items():
+        if city_key in message_lower:
+            return city_name
+    
+    # Şehir bulunamazsa varsayılan olarak İstanbul
+    return "Istanbul"
+
+async def get_weather_data(city: str = "Istanbul"):
+    """Hava durumu verilerini al - direkt weather router'ından"""
     try:
-        response = requests.get("http://localhost:8000/api/weather/?city=Istanbul", timeout=5)
-        if response.status_code == 200:
-            return response.json()
-        return None
-    except:
+        # Weather router'ını direkt import et ve çağır
+        from routers.weather import get_weather_by_city
+        weather_data = await get_weather_by_city(city)
+        return weather_data
+    except Exception as e:
+        logger.error(f"Weather data error: {e}")
         return None
 
 async def save_note(title: str, content: str):
@@ -41,7 +111,7 @@ async def save_note(title: str, content: str):
         response = requests.post(
             "http://localhost:8000/api/notes/",
             params={"title": title, "content": content},
-            timeout=5
+            timeout=3
         )
         if response.status_code == 200:
             return response.json()
@@ -59,7 +129,7 @@ async def create_calendar_event(title: str, datetime_str: str, description: str 
                 "datetime_str": datetime_str,
                 "description": description
             },
-            timeout=5
+            timeout=3
         )
         if response.status_code == 200:
             return response.json()
@@ -70,264 +140,132 @@ async def create_calendar_event(title: str, datetime_str: str, description: str 
 @router.post("/message", response_model=ChatResponse)
 async def send_message(request: ChatRequest):
     """
-    Kullanıcı mesajını işle ve AI yanıtı döndür
+    Kullanıcı mesajını işle ve AI yanıtı döndür - akıllı parsing ile
     """
     try:
         # Gemini servisini al
         gemini_service = get_gemini_service()
         
-        # Intent analizi yap
+        # Akıllı intent analizi
         intent_data = await gemini_service.analyze_intent(request.message)
         intent = intent_data.get("intent", "chat")
+        entities = intent_data.get("entities", {})
         
-        # Bağlam verilerini topla
+        logger.info(f"Intent: {intent}, Entities: {entities}, Message: {request.message}")
+        
+        # Context başlat
         context = {}
         
-        # Takvim sorguları için takvim verilerini al
-        if intent == "calendar" or "toplantı" in request.message.lower() or "etkinlik" in request.message.lower() or "takvim" in request.message.lower():
-            calendar_data = await get_calendar_data()
-            context["calendar"] = calendar_data
+        # Intent'e göre işlem yap
+        if intent == "note":
+            # Not kaydetme
+            title = entities.get("title", "Yeni Not")
+            content = entities.get("content", request.message)
             
-            # Yarın sorgusu için özel kontrol
-            if "yarın" in request.message.lower():
-                tomorrow = datetime.now() + timedelta(days=1)
-                tomorrow_events = []
-                for event in calendar_data.get("events", []):
-                    event_date = datetime.fromisoformat(event["datetime"].replace('Z', '+00:00'))
-                    if event_date.date() == tomorrow.date():
-                        tomorrow_events.append(event)
-                context["tomorrow_events"] = tomorrow_events
+            logger.info(f"Saving note - Title: {title}, Content: {content}")
+            saved_note = await save_note(title, content)
+            
+            if saved_note:
+                context["note_saved"] = saved_note
+                logger.info(f"Note saved successfully: {saved_note}")
+            else:
+                logger.warning("Failed to save note")
         
-        # Hava durumu sorguları için hava durumu verilerini al
-        if intent == "weather" or "hava" in request.message.lower():
-            weather_data = await get_weather_data()
+        elif intent == "calendar":
+            # Etkinlik oluşturma
+            title = entities.get("title", "Yeni Etkinlik")
+            datetime_str = entities.get("datetime", "")
+            description = entities.get("description", f"Kullanıcı tarafından oluşturulan etkinlik: {request.message}")
+            
+            # Varsayılan tarih
+            if not datetime_str:
+                tomorrow = datetime.now() + timedelta(days=1)
+                datetime_str = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
+            
+            logger.info(f"Creating event - Title: {title}, DateTime: {datetime_str}")
+            created_event = await create_calendar_event(title, datetime_str, description)
+            
+            if created_event:
+                context["event_created"] = created_event
+                logger.info(f"Event created successfully: {created_event}")
+            else:
+                logger.warning("Failed to create event")
+        
+        elif intent == "weather":
+            # Hava durumu - şehir ismini mesajdan çıkar
+            city = extract_city_from_message(request.message)
+            weather_data = await get_weather_data(city)
             if weather_data:
                 context["weather"] = weather_data
         
-        # Not kaydetme işlemi - Daha güçlü kontrol
-        note_keywords = ["not al", "kaydet", "not et", "not olarak", "not ekle", "not oluştur", "not yaz", "not tut", "bunu not", "notu kaydet"]
-        is_note_request = intent == "note" or any(keyword in request.message.lower() for keyword in note_keywords)
-        
-        logger.info(f"Note check - Intent: {intent}, Message: {request.message.lower()}, Is note request: {is_note_request}")
-        
-        if is_note_request:
-            entities = intent_data.get("entities", {})
-            title = entities.get("title", "").strip()
-            content = entities.get("content", "").strip()
-            
-            # AI'ın çıkardığı başlık varsa onu kullan
-            if not title:
-                # Fallback: Mesajdan başlık ve içerik çıkarma
-                message_lower = request.message.lower()
-                content = request.message
+        elif intent == "chat":
+            # Takvim sorgularını kontrol et
+            if any(keyword in request.message.lower() for keyword in ["toplantı", "etkinlik", "takvim", "yarın", "bugün"]):
+                calendar_data = await get_calendar_data()
+                logger.info(f"Calendar data retrieved: {calendar_data}")
                 
-                # Başlık çıkarma mantığı
-                if ":" in request.message:
-                    # "Not al: başlık" formatı
-                    parts = request.message.split(":", 1)
-                    if len(parts) == 2:
-                        title = parts[1].strip()
-                        content = parts[1].strip()
-                elif "not al" in message_lower:
-                    # "not al" ifadesinden sonrasını başlık yap
-                    idx = message_lower.find("not al")
-                    if idx != -1:
-                        title = request.message[idx + 6:].strip()
-                        content = title
-                elif "kaydet" in message_lower:
-                    # "kaydet" ifadesinden sonrasını başlık yap
-                    idx = message_lower.find("kaydet")
-                    if idx != -1:
-                        remaining = request.message[idx + 6:].strip()
-                        if remaining.startswith(":"):
-                            remaining = remaining[1:].strip()
-                        title = remaining if remaining else "Yeni Not"
-                        content = remaining if remaining else request.message
-                elif any(keyword in message_lower for keyword in ["not olarak", "not et", "not ekle"]):
-                    # "X not olarak ekle" formatı - X'i başlık yap
-                    for keyword in ["not olarak ekle", "not olarak", "not et", "not ekle"]:
-                        if keyword in message_lower:
-                            idx = message_lower.find(keyword)
-                            if idx > 0:
-                                title = request.message[:idx].strip()
-                                content = title
+                # Tarih-based filtering
+                filtered_events = []
+                if calendar_data and "events" in calendar_data:
+                    message_lower = request.message.lower()
+                    
+                    # Türkçe ay isimleri için filtering
+                    turkish_months = {
+                        'ocak': '01', 'şubat': '02', 'mart': '03', 'nisan': '04', 
+                        'mayıs': '05', 'haziran': '06', 'temmuz': '07', 'ağustos': '08',
+                        'eylül': '09', 'ekim': '10', 'kasım': '11', 'aralık': '12'
+                    }
+                    
+                    # "13 Temmuz" formatını kontrol et
+                    for month_name, month_num in turkish_months.items():
+                        if month_name in message_lower:
+                            # Gün sayısını bul
+                            import re
+                            day_match = re.search(r'(\d{1,2})\s+' + month_name, message_lower)
+                            if day_match:
+                                day = day_match.group(1).zfill(2)
+                                target_date = f"2025-{month_num}-{day}"
+                                logger.info(f"Filtering events for date: {target_date}")
+                                
+                                # Bu tarihteki etkinlikleri filtrele
+                                for event in calendar_data["events"]:
+                                    event_date = event.get("datetime", "")
+                                    logger.info(f"Checking event: {event.get('title')} on {event_date}")
+                                    if event_date.startswith(target_date):
+                                        filtered_events.append(event)
+                                        logger.info(f"Event matched: {event.get('title')}")
+                                
+                                logger.info(f"Found {len(filtered_events)} events for {target_date}")
                                 break
-                else:
-                    title = "Yeni Not"
-                    content = request.message
-            
-            # İçerik yoksa başlığı içerik yap
-            if not content:
-                content = title if title else request.message
-            
-            # Başlık yoksa varsayılan
-            if not title:
-                title = "Yeni Not"
-            
-            # Notu kaydet
-            logger.info(f"Saving note - Title: {title}, Content: {content}")
-            saved_note = await save_note(title, content)
-            logger.info(f"Note save result: {saved_note}")
-            if saved_note:
-                context["note_saved"] = saved_note
-        
-        # Etkinlik oluşturma işlemi
-        calendar_keywords = ["etkinlik", "toplantı", "randevu", "takvim", "etkinlik oluştur", "toplantı kur", "randevu al"]
-        is_calendar_request = intent == "calendar" or any(keyword in request.message.lower() for keyword in calendar_keywords)
-        
-        logger.info(f"Calendar check - Intent: {intent}, Message: {request.message.lower()}, Is calendar request: {is_calendar_request}")
-        
-        if is_calendar_request:
-            entities = intent_data.get("entities", {})
-            title = entities.get("title", "").strip()
-            datetime_str = entities.get("datetime", "").strip()
-            ai_description = entities.get("description", "").strip()
-            
-            # AI'ın çıkardığı başlık varsa onu kullan, yoksa fallback mantığı
-            if not title:
-                # Fallback: Mesajdan başlık çıkarma
-                message_lower = request.message.lower()
+                    
+                    # Bugün/yarın kontrolü
+                    today = datetime.now().date()
+                    if "bugün" in message_lower:
+                        target_date = today.strftime("%Y-%m-%d")
+                        for event in calendar_data["events"]:
+                            event_date = event.get("datetime", "")
+                            if event_date.startswith(target_date):
+                                filtered_events.append(event)
+                    elif "yarın" in message_lower:
+                        tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+                        for event in calendar_data["events"]:
+                            event_date = event.get("datetime", "")
+                            if event_date.startswith(tomorrow):
+                                filtered_events.append(event)
                 
-                if ":" in request.message:
-                    # "Etkinlik oluştur: başlık" formatı
-                    parts = request.message.split(":", 1)
-                    if len(parts) == 2:
-                        title = parts[1].strip()
-                        # Tarih ifadelerini temizle
-                        import re
-                        date_patterns = [
-                            r'\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b',  # 12/06/2025
-                            r'\b\d{1,2}:\d{2}\b',  # 10:00
-                            r'\byarın\b', r'\bbugün\b', r'\bgelecek\s+\w+\b'
-                        ]
-                        for pattern in date_patterns:
-                            title = re.sub(pattern, '', title, flags=re.IGNORECASE)
-                        title = title.strip()
-                elif any(word in message_lower for word in ["etkinlik", "toplantı", "randevu"]):
-                    # Anahtar kelimeden sonrasını başlık yap
-                    for keyword in ["etkinlik oluştur", "toplantı kur", "randevu al", "etkinlik", "toplantı", "randevu"]:
-                        if keyword in message_lower:
-                            idx = message_lower.find(keyword)
-                            if idx != -1:
-                                remaining = request.message[idx + len(keyword):].strip()
-                                if remaining:
-                                    # Tarih ifadelerini temizle
-                                    import re
-                                    date_patterns = [
-                                        r'\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b',  # 12/06/2025
-                                        r'\b\d{1,2}:\d{2}\b',  # 10:00
-                                        r'\byarın\b', r'\bbugün\b', r'\bgelecek\s+\w+\b'
-                                    ]
-                                    clean_title = remaining
-                                    for pattern in date_patterns:
-                                        clean_title = re.sub(pattern, '', clean_title, flags=re.IGNORECASE)
-                                    title = clean_title.strip()
-                                    break
-                
-                if not title:
-                    title = "Yeni Etkinlik"
-            
-            # AI'ın çıkardığı tarih varsa onu kullan, yoksa fallback mantığı
-            if not datetime_str:
-                import re
-                from datetime import datetime as dt, timedelta as td
-                
-                # Türkçe ay isimleri
-                turkish_months = {
-                    'ocak': 1, 'şubat': 2, 'mart': 3, 'nisan': 4, 'mayıs': 5, 'haziran': 6,
-                    'temmuz': 7, 'ağustos': 8, 'eylül': 9, 'ekim': 10, 'kasım': 11, 'aralık': 12
+                # Filtrelenmiş etkinlikleri context'e ekle
+                context["calendar"] = {
+                    "events": filtered_events,
+                    "count": len(filtered_events),
+                    "query_date": request.message
                 }
-                
-                message_lower = request.message.lower()
-                
-                # Türkçe tarih formatı kontrolü (21 haziran, 15 mayıs vb.)
-                for month_name, month_num in turkish_months.items():
-                    pattern = rf'\b(\d{{1,2}})\s+{month_name}\b'
-                    match = re.search(pattern, message_lower)
-                    if match:
-                        day = int(match.group(1))
-                        year = dt.now().year
-                        
-                        # Saat varsa çıkar
-                        time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
-                        if time_match:
-                            hour, minute = int(time_match.group(1)), int(time_match.group(2))
-                        else:
-                            hour, minute = 10, 0
-                        
-                        try:
-                            event_date = dt(year, month_num, day, hour, minute)
-                            datetime_str = event_date.isoformat()
-                            logger.info(f"Turkish date parsed: {day} {month_name} → {datetime_str}")
-                            break
-                        except ValueError:
-                            logger.warning(f"Invalid Turkish date: {day} {month_name}")
-                            continue
-                
-                # Eğer Türkçe tarih bulunamadıysa diğer formatları dene
-                if not datetime_str:
-                    # Yarın kontrolü
-                    if "yarın" in message_lower:
-                        tomorrow = dt.now() + td(days=1)
-                        # Saat varsa çıkar
-                        time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
-                        if time_match:
-                            hour, minute = int(time_match.group(1)), int(time_match.group(2))
-                            datetime_str = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
-                        else:
-                            datetime_str = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
-                    
-                    # Bugün kontrolü
-                    elif "bugün" in message_lower:
-                        today = dt.now()
-                        time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
-                        if time_match:
-                            hour, minute = int(time_match.group(1)), int(time_match.group(2))
-                            datetime_str = today.replace(hour=hour, minute=minute, second=0, microsecond=0).isoformat()
-                        else:
-                            datetime_str = today.replace(hour=14, minute=0, second=0, microsecond=0).isoformat()
-                    
-                    # Tarih formatı kontrolü (12/06/2025, 12.06.2025)
-                    else:
-                        date_match = re.search(r'\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b', request.message)
-                        if date_match:
-                            day, month, year = int(date_match.group(1)), int(date_match.group(2)), int(date_match.group(3))
-                            if year < 100:
-                                year += 2000
-                            
-                            time_match = re.search(r'\b(\d{1,2}):(\d{2})\b', request.message)
-                            if time_match:
-                                hour, minute = int(time_match.group(1)), int(time_match.group(2))
-                            else:
-                                hour, minute = 10, 0
-                            
-                            try:
-                                event_date = dt(year, month, day, hour, minute)
-                                datetime_str = event_date.isoformat()
-                            except ValueError:
-                                logger.warning(f"Invalid date format: {day}/{month}/{year}")
-                                pass
-                
-                # Varsayılan: yarın saat 10:00
-                if not datetime_str:
-                    tomorrow = dt.now() + td(days=1)
-                    datetime_str = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
-                    logger.info(f"Using default date: {datetime_str}")
             
-            logger.info(f"Final datetime_str: {datetime_str}")
-            
-            # Açıklama oluştur - AI'ın çıkardığı description varsa onu kullan
-            if ai_description:
-                description = ai_description
-            else:
-                description = f"Kullanıcı tarafından oluşturulan etkinlik: {request.message}"
-            
-            # Etkinliği oluştur
-            logger.info(f"Creating event - Title: {title}, DateTime: {datetime_str}, Description: {description}")
-            created_event = await create_calendar_event(title, datetime_str, description)
-            logger.info(f"Event creation result: {created_event}")
-            if created_event:
-                context["event_created"] = created_event
+            # Hava durumu sorgularını kontrol et
+            if "hava" in request.message.lower():
+                city = extract_city_from_message(request.message)
+                weather_data = await get_weather_data(city)
+                if weather_data:
+                    context["weather"] = weather_data
         
         # Akıllı yanıt üret
         ai_response = await gemini_service.generate_smart_response(
@@ -402,22 +340,19 @@ async def delete_chat_history(user_id: str):
     """
     try:
         if firebase_service.is_available():
-            if firebase_service.delete_chat_history(user_id=user_id):
-                return {
-                    "message": "Chat geçmişi başarıyla silindi",
-                    "user_id": user_id
-                }
+            success = firebase_service.delete_chat_history(user_id=user_id)
+            if success:
+                return {"message": "Chat geçmişi başarıyla silindi"}
             else:
                 raise HTTPException(
                     status_code=500,
-                    detail="Chat geçmişi silinirken hata oluştu"
+                    detail="Chat geçmişi silinemedi"
                 )
         else:
-            return {
-                "message": "Firebase kullanılamıyor, silinecek chat geçmişi yok",
-                "user_id": user_id
-            }
+            return {"message": "Firebase kullanılamıyor, chat geçmişi zaten yok"}
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Chat history deletion error: {str(e)}")
         raise HTTPException(
@@ -428,15 +363,16 @@ async def delete_chat_history(user_id: str):
 @router.post("/analyze-intent")
 async def analyze_message_intent(request: ChatRequest):
     """
-    Mesaj amacını analiz et (debug için)
+    Mesajın intent'ini analiz et (debug amaçlı)
     """
     try:
         gemini_service = get_gemini_service()
         intent_data = await gemini_service.analyze_intent(request.message)
+        
         return {
             "message": request.message,
-            "intent_analysis": intent_data,
-            "timestamp": datetime.now()
+            "intent_data": intent_data,
+            "timestamp": datetime.now().isoformat()
         }
         
     except Exception as e:
@@ -449,25 +385,28 @@ async def analyze_message_intent(request: ChatRequest):
 @router.get("/health")
 async def chat_health():
     """
-    Chat servisinin sağlık durumu
+    Chat servisinin sağlık durumunu kontrol et
     """
     try:
-        # Basit bir test mesajı gönder
+        # Gemini servisini test et
         gemini_service = get_gemini_service()
-        test_response = await gemini_service.generate_response("Merhaba")
+        
+        # Firebase durumunu kontrol et
+        firebase_available = firebase_service.is_available()
         
         return {
             "status": "healthy",
-            "gemini_service": "active",
-            "firebase_service": "active" if firebase_service.is_available() else "inactive",
-            "test_response": test_response[:50] + "..." if len(test_response) > 50 else test_response
+            "gemini_service": "available",
+            "firebase_service": "available" if firebase_available else "unavailable",
+            "timestamp": datetime.now().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"Chat health check failed: {str(e)}")
+        logger.error(f"Health check error: {str(e)}")
         return {
             "status": "unhealthy",
-            "error": str(e)
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
         }
 
 @router.post("/audio-message", response_model=ChatResponse)
@@ -475,45 +414,25 @@ async def send_audio_message(file: UploadFile = File(...), user_id: str = "defau
     """
     Sesli mesajı işle ve AI yanıtı döndür
     """
-    temp_file_path = None
     try:
-        # Geçici dosya oluştur
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.filename.split('.')[-1]}") as temp_file:
-            temp_file_path = temp_file.name
-            # Ses dosyasını geçici dosyaya yaz
-            file_content = await file.read()
-            temp_file.write(file_content)
+        # Sesli mesajı text'e çevir
+        text_message = await audio_service.transcribe_audio(file)
         
-        logger.info(f"Audio file saved to: {temp_file_path}")
-        
-        # Ses dosyasını metne dönüştür
-        text = audio_service.speech_to_text(temp_file_path)
-        logger.info(f"Speech to text result: {text}")
-        
-        # Eğer ses tanıma başarısızsa hata mesajı döndür
-        if not text or text.startswith("Ses"):
-            return ChatResponse(
-                message_id=str(uuid.uuid4()),
-                response=text or "Ses dosyası işlenemedi. Lütfen tekrar deneyin.",
-                timestamp=datetime.now().isoformat()
+        if not text_message:
+            raise HTTPException(
+                status_code=400,
+                detail="Ses dosyası işlenemedi"
             )
         
-        # Metni normal mesaj olarak işle
-        chat_request = ChatRequest(message=text, user_id=user_id)
-        response = await send_message(chat_request)
+        # Text mesajını normal mesaj gibi işle
+        request = ChatRequest(message=text_message, user_id=user_id)
+        return await send_message(request)
         
-        # Yanıta orijinal ses metnini ekle
-        response.original_audio_text = text
-        
-        return response
-        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Sesli mesaj işlenirken hata oluştu: {str(e)}")
+        logger.error(f"Audio message error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Sesli mesaj işlenirken hata oluştu: {str(e)}"
-        )
-    finally:
-        # Geçici dosyayı temizle
-        if temp_file_path:
-            audio_service.cleanup_temp_file(temp_file_path) 
+            detail="Sesli mesaj işlenirken hata oluştu"
+        ) 
